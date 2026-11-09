@@ -112,6 +112,20 @@
     opacity: 0;
     pointer-events: none;
   }
+  #game {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: var(--bg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 500ms ease;
+  }
+  #game.open { opacity: 1; pointer-events: auto; }
+  body.game #breath { animation-play-state: paused; }
   touch-controls { display: none !important; }
 </style>
 </head>
@@ -637,9 +651,14 @@ let today = store.get("pickle-jar-day") === dayKey() ? Number(store.get("pickle-
 nEl.textContent = count.toLocaleString("en-ZA");
 todayEl.textContent = today;
 let combo = 0, lastTap = 0, lastActive = performance.now(), calmTimer;
+/* Taps toward the Counter. It forgives longer gaps than the combo, because the
+ * page stalls for a moment while the game loads in the background. */
+let streak = 0, lastStreakTap = 0;
 
-function pop(x, y) {
+function pop(x, y, at = performance.now()) {
   const now = performance.now();
+  streak = at - lastStreakTap < 1500 ? streak + 1 : 1;
+  lastStreakTap = at;
   combo = now - lastTap < 650 ? combo + 1 : 1;
   lastTap = lastActive = now;
   hint.classList.add("hide");
@@ -662,15 +681,52 @@ function pop(x, y) {
   nEl.animate([{ transform: "scale(1.15)" }, { transform: "scale(1)" }], { duration: 220, easing: "ease-out" });
   store.set("pickle-jar-count", count);
   store.set("pickle-jar-today", today);
-  if (gold) { shout("Golden pickle!"); rain(10, true); }
+  if (streak === GAME_AT) { shout("The Counter is open!"); rain(20); setTimeout(openGame, 800); }
+  else if (gold) { shout("Golden pickle!"); rain(10, true); }
   else if (combo === 6) shout("Crunchy!");
+  else if (streak === GAME_AT - 8) { shout("Something's brewing…"); loadGame(); }
   else if (combo === 12) { shout("Pickle party!"); rain(26); wiggle(); }
   else if (count % 100 === 0) { shout(`${count.toLocaleString("en-ZA")} pickles!`); rain(18); }
   clearTimeout(calmTimer);
   calmTimer = setTimeout(() => { want.open = 0; want.round = 0; want.blush = 0; }, 900);
 }
 
-document.addEventListener("pointerdown", (e) => { e.preventDefault(); pop(e.clientX, e.clientY); }, { passive: false });
+/* ---------- The Counter: a long tapping streak opens the website's game ---------- */
+
+/* The game is the homepage easter egg, built as its own page (counter/). It is
+ * loaded a few taps early so it is ready when the streak lands, and it posts
+ * "pickle-counter:close" when someone leaves it or it has sat untouched. */
+const GAME_URL = "https://storage.googleapis.com/00fa9dc16a368693-public-storage/office-display/counter/index.html";
+const GAME_AT = 24;
+let game = null, gameUnused;
+function loadGame() {
+  if (game) return;
+  game = document.createElement("iframe");
+  game.id = "game";
+  game.title = "The Counter";
+  game.src = GAME_URL;
+  document.body.append(game);
+  gameUnused = setTimeout(closeGame, 12000);
+}
+function openGame() {
+  loadGame();
+  clearTimeout(gameUnused);
+  document.body.classList.add("game");
+  game.getBoundingClientRect(); // so the fade-in starts from the hidden state
+  game.classList.add("open");
+}
+function closeGame() {
+  if (!game) return;
+  const g = game;
+  game = null;
+  g.classList.remove("open");
+  document.body.classList.remove("game");
+  setTimeout(() => g.remove(), 600);
+  lastActive = performance.now();
+}
+addEventListener("message", (e) => { if (e.data === "pickle-counter:close") closeGame(); });
+
+document.addEventListener("pointerdown", (e) => { e.preventDefault(); pop(e.clientX, e.clientY, e.timeStamp); }, { passive: false });
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("keydown", (e) => {
   if (e.key === " " || e.key === "Enter") pop(innerWidth / 2, innerHeight / 2);
@@ -734,6 +790,7 @@ function checkMoments() {
 
 let nextTrick = performance.now() + 9000;
 setInterval(() => {
+  if (document.body.classList.contains("game")) return;
   checkMoments();
   const now = performance.now();
   const idle = now - lastActive;
